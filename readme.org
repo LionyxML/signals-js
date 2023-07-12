@@ -1,0 +1,728 @@
+#+TITLE: Signals implementations on Javascript
+#+AUTHOR: Rahul M. Juliato
+#+DATE: <2023-07-12 Qua>
+#+OPTIONS: toc:nil
+
+* Basic Signals
+#+BEGIN_SRC js
+
+  class Signal {
+	constructor(initialValue) {
+	  this._value = initialValue;
+	  this._dependents = new Set();
+	}
+
+	get value() {
+	  return this._value;
+	}
+
+	set value(newValue) {
+	  if(this._value !== newValue) {
+		this._value = newValue;
+		this._notifyDependents();
+	  }
+	}
+
+	_notifyDependents() {
+	  for (const dependent of this._dependents) {
+		dependent._update();
+	  }
+	}
+
+	_addDependent(dependent) {
+	  this._dependents.add(dependent);
+	}
+
+  }
+
+
+  class Computed {
+	constructor(computeFn, dependencies) {
+	  this._computeFn = computeFn;
+	  this._dependencies = dependencies;
+	  this._value = undefined;
+	  this._isStale = true;
+
+	  for (const dependency of this._dependencies) {
+	    dependency._addDependent(this);
+	  }
+	}
+
+	get value() {
+	  if (this._isStale) {
+		  this._recomputeValue();
+	  }
+	  return this._value;
+	}
+
+	_recomputeValue() {
+	  this._value = this._computeFn();
+	  this._isStale = false;
+	}
+
+	_update() {
+	  this._isStale = true;  
+	}
+
+	dispose() {
+	  for (const dependency of this._dependencies) {
+		dependency._removeDependent(this);
+	  }
+	}
+  }
+
+  function createSignal(initialValue) {
+	return new Signal(initialValue);
+  }
+
+  function createComputed(computeFn, dependencies) {
+	return new Computed(computeFn, dependencies);
+  }
+
+  const a = createSignal(0);
+  const b = createSignal(2);
+
+  const c = createComputed(() => a.value * b.value, [a, b]);
+
+  console.log(c.value);
+
+  a.value = 1;
+  console.log(c.value);
+
+  b.value = 3;
+  console.log(c.value);
+
+#+END_SRC
+
+#+RESULTS:
+: 0
+: 2
+: 3
+: undefined
+
+* Basic + Automatically tracking dependencies
+#+BEGIN_SRC js
+
+  let currentComputed = null;
+
+  class Signal {
+	constructor(initialValue) {
+	  this._value = initialValue;
+	  this._dependents = [];
+	}
+
+	get value() {
+	  if (currentComputed) {
+		this._addDependent(currentComputed);
+	  }
+	  return this._value;
+	}
+
+	set value(newValue) {
+	  if(this._value !== newValue) {
+		this._value = newValue;
+		this._notifyDependents();
+	  }
+	}
+
+	_notifyDependents() {
+	  for (const dependent of this._dependents) {
+		dependent._update();
+	  }
+	}
+
+	_addDependent(computed) {
+	  if (!this._dependents.includes(computed)) {
+		this._dependents.push(computed);
+	  }
+	}
+
+	_removeDependent(computed) {
+	  this._dependents = this._dependents.filter((dep) => dep !== computed);
+	}
+
+  }
+
+
+  class Computed {
+	constructor(computeFn, dependencies) {
+	  this._computeFn = computeFn;
+	  this._dependencies = dependencies;
+	  this._value = undefined;
+	  this._isStale = true;
+	}
+
+	get value() {
+	  if (this._isStale) {
+		  currentComputed = this;
+		  this._recomputeValue();
+	      currentComputed = null;
+	  }
+	  return this._value;
+	}
+
+	_recomputeValue() {
+	  this._value = this._computeFn();
+	  this._isStale = false;
+	}
+
+	_update() {
+	  this._isStale = true;  
+	}
+  }
+
+  function createSignal(initialValue) {
+	return new Signal(initialValue);
+  }
+
+  function createComputed(computeFn, dependencies) {
+	return new Computed(computeFn, dependencies);
+  }
+
+  const a = createSignal(0);
+  const b = createSignal(2);
+
+  const c = createComputed(() => a.value * b.value);
+
+  console.log(c.value);
+
+  a.value = 1;
+  console.log(c.value);
+
+  b.value = 3;
+  console.log(c.value);
+
+#+END_SRC
+
+#+RESULTS:
+: 0
+: 2
+: 3
+: undefined
+
+* Effects
+#+BEGIN_SRC js
+
+  let currentAccessed = null;
+
+  class Signal {
+	constructor(initialValue) {
+	  this._value = initialValue;
+	  this._dependents = [];
+	}
+
+	get value() {
+	  if (currentAccessed) {
+		this._addDependent(currentAccessed);
+	  }
+	  return this._value;
+	}
+
+	set value(newValue) {
+	  if(this._value !== newValue) {
+		this._value = newValue;
+		this._notifyDependents();
+	  }
+	}
+
+	_notifyDependents() {
+	  for (const dependent of this._dependents) {
+		dependent._update();
+	  }
+	}
+
+	_addDependent(computed) {
+	  if (!this._dependents.includes(computed)) {
+		this._dependents.push(computed);
+	  }
+	}
+
+	_removeDependent(computed) {
+	  this._dependents = this._dependents.filter((dep) => dep !== computed);
+	}
+
+  }
+
+
+  class Computed {
+	constructor(computeFn, dependencies) {
+	  this._computeFn = computeFn;
+	  this._dependencies = dependencies;
+	  this._value = undefined;
+	  this._isStale = true;
+	}
+
+	get value() {
+	  if (this._isStale) {
+		  currentAccessed = this;
+		  this._recomputeValue();
+		  currentAccessed = null;
+	  }
+	  return this._value;
+	}
+
+	_recomputeValue() {
+	  this._value = this._computeFn();
+	  this._isStale = false;
+	}
+
+	_update() {
+	  this._isStale = true;  
+	}
+  }
+
+  class Effect {
+	constructor(effectFn) {
+	  this._effectFn = effectFn;
+	  this._isStale = true;
+	  this._execute();
+	}
+
+	_execute() {
+	  if (this._isStale) {
+		currentAccessed = this;
+		this._effectFn();
+		currentAccessed = null;
+	  }
+	}
+
+	_update() {
+	  this._isStale = true;
+	  this._execute();
+	}
+  }
+
+  function createSignal(initialValue) {
+	return new Signal(initialValue);
+  }
+
+  function createComputed(computeFn, dependencies) {
+	return new Computed(computeFn, dependencies);
+  }
+
+  function createEffect(effectFn) {
+	return new Effect(effectFn);
+  }
+
+  const a = createSignal(0);
+  const b = createSignal(2);
+
+  createEffect(() => {
+	console.log(`Effect called: a is ${a.value} and b is ${b.value}`);
+  });
+
+  a.value = 1;
+  b.value = 3;
+  
+#+END_SRC
+
+#+RESULTS:
+: Effect called: a is 0 and b is 2
+: Effect called: a is 1 and b is 2
+: Effect called: a is 1 and b is 3
+: undefined
+
+* Complex dependencies and batching Effects
+The previous code snippets do not support dependencies neither between
+Computed objects nor between Effect and Computed. Also, it is
+important to ensure that Effects are triggered after all the Computed
+object have been notified that a dependant signal has been updated.
+
+In this version, the Computed class explicitly tracks dependents using
+an array. When the value() getter is called, it sets the current
+context (currentAccessed) to the Computed instance, recompute the
+value, and updates the dependencies. If the current context is another
+Computed instance, the Computed instance is added as a dependency of
+the current context.
+
+The _update() method now marks the Computed instance as stale and
+updates all its dependents, allowing for more explicit dependency
+tracking.
+
+To ensure effects are executed after computed values have been
+notified, we can implement a simple queue system that will store the
+effects that need to be executed. Once the computed values have been
+updated, we can then execute the effects in the queue.
+
+Here’s an updated version of the library, including the Effect class
+and the mechanism to execute effects after computed values have been
+notified.
+
+
+#+BEGIN_SRC js
+  class Signal {
+	constructor(initialValue) {
+		this._value = initialValue;
+		this._dependents = [];
+	}
+
+	get value() {
+		if (currentAccessed) {
+			this._addDependent(currentAccessed);
+		}
+		return this._value;
+	}
+
+	set value(newValue) {
+		if (this._value !== newValue) {
+			this._value = newValue;
+			this._notifyDependents();
+			executeEffects();
+		}
+	}
+
+	_addDependent(dependent) {
+		if (!this._dependents.includes(dependent)) {
+			this._dependents.push(dependent);
+		}
+	}
+
+	_notifyDependents() {
+		for (const dependent of this._dependents) {
+			dependent._update();
+		}
+	}
+  }
+
+  class Computed {
+	  constructor(computeFn) {
+		  this._computeFn = computeFn;
+		  this._value = undefined;
+		  this._isStale = true;
+		  this._dependents = [];
+	  }
+
+	  get value() {
+		  if (this._isStale) {
+			const previousContext = currentAccessed;
+			currentAccessed = this;
+			this._recomputeValue();
+			currentAccessed = previousContext;
+		  }
+		  if (currentAccessed) {
+			this._addDependent(currentAccessed);
+		  }
+
+		  return this._value;
+	  }
+
+	  _recomputeValue() {
+		  this._value = this._computeFn();
+		  this._isStale = false;
+	  }
+
+	  _addDependent(dependent) {
+		  if (!this._dependents.includes(dependent)) {
+			  this._dependents.push(dependent);
+		  }
+	  }
+
+	  _update() {
+		  if (!this._isStale) {
+			this._isStale = true;
+			for (const dependent of this._dependents) {
+				dependent._update();
+			}
+		  }
+	  }
+  }
+
+
+  class Effect {
+	  constructor(effectFn) {
+		this._effectFn = effectFn;
+		this._isStale = true;
+		this._execute();
+	  }
+
+	  _execute() {
+		if (this._isStale) {
+			currentAccessed = this;
+			this._effectFn();
+			currentAccessed = null;
+		}
+		this._isStale = false;
+	  }
+
+	  _update() {
+		if (!this._isStale) {
+			this._isStale = true;
+			effectQueue.push(this);
+		}
+	  }
+  }
+
+  function executeEffects() {
+	  while (effectQueue.length > 0) {
+		const effect = effectQueue.shift();
+		effect._execute();
+	  }
+  }
+
+#+END_SRC
+
+* Simple HTML Application with Signals
+
+#+BEGIN_SRC html
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Signals TODO App</title>
+	<style>
+	  body {
+		font-family: Arial, sans-serif;
+		margin: 0;
+		padding: 2rem;
+	  }
+	  ul {
+		list-style: none;
+		padding: 0;
+	  }
+	</style>
+  </head>
+  <body>
+	<h1>Signals TODO App</h1>
+	<form id="todoForm">
+	  <input type="text" id="todoInput" placeholder="Add a new task" />
+	  <button type="submit">Add</button>
+	</form>
+	<h2>Tasks</h2>
+	<div id="taskFilter">
+	  <label><input type="radio" name="filter" value="all" checked /> All</label>
+	  <label><input type="radio" name="filter" value="active" /> Active</label>
+	  <label><input type="radio" name="filter" value="completed" /> Completed</label>
+	</div>
+	<ul id="todoList"></ul>
+	<div id="taskCounter"></div>
+
+	<script>
+	  // Include the Signals library code here
+	  // Global variable to keep track of the currently accessed computed or effect
+	  let currentAccessed = null;
+	  const effectQueue = [];
+
+
+	  class Signal {
+		  constructor(initialValue) {
+			  this._value = initialValue;
+			  this._dependents = [];
+		  }
+
+		  get value() {
+			  if (currentAccessed) {
+				this._addDependent(currentAccessed);
+			  }
+			  return this._value;
+		  }
+
+		  set value(newValue) {
+			  if (this._value !== newValue) {
+				this._value = newValue;
+				this._notifyDependents();
+				executeEffects();
+			  }
+		  }
+
+		  _addDependent(dependent) {
+			  if (!this._dependents.includes(dependent)) {
+				this._dependents.push(dependent);
+			  }
+		  }
+
+		  _removeDependent(dependent) {
+			  this._dependents = this._dependents.filter((dep) => dep !== dependent);
+		  }
+
+		  _notifyDependents() {
+			  for (const dependent of this._dependents) {
+				dependent._update();
+			  }
+		  }
+	  }
+
+	  class Computed {
+		constructor(computeFn) {
+		  this._computeFn = computeFn;
+		  this._value = undefined;
+		  this._isStale = true;
+		  this._dependents = [];
+		}
+
+		get value() {
+		  if (this._isStale) {
+			const previousContext = currentAccessed;
+			currentAccessed = this;
+			this._recomputeValue();
+			currentAccessed = previousContext;
+		  }
+		  if (currentAccessed) {
+			this._addDependent(currentAccessed);
+		  }
+
+		  return this._value;
+		}
+
+		_recomputeValue() {
+		  this._value = this._computeFn();
+		  this._isStale = false;
+		}
+
+		_addDependent(dependent) {
+			if (!this._dependents.includes(dependent)) {
+			  this._dependents.push(dependent);
+			}
+		}
+
+
+		_update() {
+		  if (!this._isStale) {
+			this._isStale = true;
+			for (const dependent of this._dependents) {
+			  dependent._update();
+			}
+		  }
+		}
+	  }
+
+  // Store the current context (a Computed or Effect instance) for dependency tracking
+
+
+	  class Effect {
+		constructor(effectFn) {
+		  this._effectFn = effectFn;
+		  this._isStale = true;
+		  this._execute();
+		}
+
+		_execute() {
+		  if (this._isStale) {
+			currentAccessed = this;
+			this._effectFn();
+			currentAccessed = null;
+		  }
+		  this._isStale = false;
+		}
+
+		_update() {
+		  if (!this._isStale) {
+			this._isStale = true;
+			effectQueue.push(this);
+		  }
+		}
+	  }
+
+	  function executeEffects() {
+		while (effectQueue.length > 0) {
+		  const effect = effectQueue.shift();
+		  effect._execute();
+		}
+	  }
+
+
+	  function createSignal(initialValue) {
+		return new Signal(initialValue);
+	  }
+
+	  function createComputed(computeFn) {
+		return new Computed(computeFn);
+	  }
+
+	  function createEffect(effectFn) {
+		return new Effect(effectFn);
+	  }
+
+
+	  // Application logic
+	  const todoForm = document.getElementById("todoForm");
+	  const todoInput = document.getElementById("todoInput");
+	  const todoList = document.getElementById("todoList");
+	  const taskFilter = document.getElementById("taskFilter");
+	  const taskCounter = document.getElementById("taskCounter");
+
+	  const tasks = createSignal([]);
+	  const filter = createSignal("all");
+
+	  const filteredTasks = createComputed(() => {
+		const currentFilter = filter.value;
+		const currentTasks = tasks.value;
+
+		if (currentFilter === "all") {
+		  return currentTasks;
+		} else if (currentFilter === "active") {
+		  return currentTasks.filter((task) => !task.completed);
+		} else {
+		  return currentTasks.filter((task) => task.completed);
+		}
+	  });
+
+	  const taskCount = createComputed(() => {
+		return tasks.value.length;
+	  });
+
+	  const activeTaskCount = createComputed(() => {
+		return tasks.value.filter((task) => !task.completed).length;
+	  });
+
+	  const completedTaskCount = createComputed(() => {
+		return tasks.value.filter((task) => task.completed).length;
+	  });
+
+	  todoForm.addEventListener("submit", (event) => {
+		event.preventDefault();
+		const taskTitle = todoInput.value.trim();
+		if (taskTitle) {
+		  const newTask = { title: taskTitle, completed: false };
+		  tasks.value = [...tasks.value, newTask];
+		  todoInput.value = "";
+		}
+	  });
+
+	  taskFilter.addEventListener("change", (event) => {
+		filter.value = event.target.value;
+	  });
+
+	  createEffect(() => {
+      
+		const currentTasks = filteredTasks.value;
+		todoList.innerHTML = "";
+		currentTasks.forEach((task, index) => {
+		  const listItem = document.createElement("li");
+		  const label = document.createElement("label");
+		  const checkbox = document.createElement("input");
+		  checkbox.type = "checkbox";
+		  checkbox.checked = task.completed;
+		  checkbox.addEventListener("change", () => {
+			tasks.value[index].completed = checkbox.checked;
+			tasks.value = [...tasks.value];
+		  });
+		  label.appendChild(checkbox);
+		  label.appendChild(document.createTextNode(" " + task.title));
+		  listItem.appendChild(label);
+		  todoList.appendChild(listItem);
+		});
+	  });
+
+	  createEffect(() => {
+		taskCounter.textContent = `
+		  Total: ${taskCount.value}, 
+		  Active: ${activeTaskCount.value}, 
+		  Completed: ${completedTaskCount.value}
+		`;
+	  });
+
+	</script>
+  </body>
+  </html>
+#+END_SRC
+
+* Source
+[[https://medium.com/gft-engineering/implementing-signals-in-javascript-step-by-step-9d0be46fb014]]
+
+
+
+
+
+
+
