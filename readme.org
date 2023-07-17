@@ -720,6 +720,222 @@ notified.
 * Source
 [[https://medium.com/gft-engineering/implementing-signals-in-javascript-step-by-step-9d0be46fb014]]
 
+* Testing
+#+BEGIN_SRC js
+  let currentAccessed = null;
+  const effectQueue = [];
+
+
+  class Signal {
+	  constructor(initialValue) {
+		  this._value = initialValue;
+		  this._dependents = [];
+	  }
+
+	  get value() {
+		  if (currentAccessed) {
+			  this._addDependent(currentAccessed);
+		  }
+		  return this._value;
+	  }
+
+	  set value(newValue) {
+		  if (this._value !== newValue) {
+			  this._value = newValue;
+			  this._notifyDependents();
+			  executeEffects();
+		  }
+	  }
+
+	  _addDependent(dependent) {
+		  if (!this._dependents.includes(dependent)) {
+			  this._dependents.push(dependent);
+		  }
+	  }
+
+	  _removeDependent(dependent) {
+		  this._dependents = this._dependents.filter((dep) => dep !== dependent);
+	  }
+
+	  _notifyDependents() {
+		  for (const dependent of this._dependents) {
+			  dependent._update();
+		  }
+	  }
+  }
+
+  class Computed {
+	  constructor(computeFn) {
+		  this._computeFn = computeFn;
+		  this._value = undefined;
+		  this._isStale = true;
+		  this._dependents = [];
+	  }
+
+	  get value() {
+		  if (this._isStale) {
+			  const previousContext = currentAccessed;
+			  currentAccessed = this;
+			  this._recomputeValue();
+			  currentAccessed = previousContext;
+		  }
+		  if (currentAccessed) {
+			  this._addDependent(currentAccessed);
+		  }
+
+		  return this._value;
+	  }
+
+	  _recomputeValue() {
+		  this._value = this._computeFn();
+		  this._isStale = false;
+	  }
+
+	  _addDependent(dependent) {
+		  if (!this._dependents.includes(dependent)) {
+			  this._dependents.push(dependent);
+		  }
+	  }
+
+
+	  _update() {
+		  if (!this._isStale) {
+			  this._isStale = true;
+			  for (const dependent of this._dependents) {
+				dependent._update();
+			  }
+		  }
+	  }
+  }
+
+
+
+  class Effect {
+	  constructor(effectFn) {
+		  this._effectFn = effectFn;
+		  this._isStale = true;
+		  this._execute();
+	  }
+
+	  _execute() {
+		  if (this._isStale) {
+			  currentAccessed = this;
+			  this._effectFn();
+			  currentAccessed = null;
+		  }
+		  this._isStale = false;
+	  }
+
+	  _update() {
+		  if (!this._isStale) {
+			  this._isStale = true;
+			  effectQueue.push(this);
+		  }
+	  }
+  }
+
+  function executeEffects() {
+	  while (effectQueue.length > 0) {
+		  const effect = effectQueue.shift();
+		  effect._execute();
+	  }
+  }
+
+
+  function createSignal(initialValue) {
+	  return new Signal(initialValue);
+  }
+
+  function createComputed(computeFn) {
+	  return new Computed(computeFn);
+  }
+
+  function createEffect(effectFn) {
+	  return new Effect(effectFn);
+  }
+
+  // --- Testing Computed
+  const x = createSignal(1);
+  const y = createSignal(2);
+
+  const z = createComputed(() => x.value * y.value);
+
+  console.log(z.value);
+
+  x.value = 10;
+  console.log(`Computed when called: ${z.value}`);
+
+  y.value = 10;
+  console.log(`Computed when called: ${z.value}`);
+
+
+
+  // --- Testing Effects
+  const a = createSignal(0);
+  const b = createSignal(0);
+
+  createEffect(() => {
+	console.log(`1 Effect called: a is ${a.value} and b is ${b.value}`);
+  });
+
+  createEffect(() => {
+	console.log(`2 Effect called: a is ${a.value} and b is ${b.value}`);
+  });
+
+  createEffect(() => {
+	console.log(`3 Effect called: a is ${a.value} and b is ${b.value}\n---`);
+  });
+
+  a.value = 2;
+  b.value = 2;
+
+  a.value = 3;
+  b.value = 3;
+
+
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+2
+Computed when called: 20
+Computed when called: 100
+1 Effect called: a is 0 and b is 0
+2 Effect called: a is 0 and b is 0
+3 Effect called: a is 0 and b is 0
+---
+1 Effect called: a is 2 and b is 0
+2 Effect called: a is 2 and b is 0
+3 Effect called: a is 2 and b is 0
+---
+1 Effect called: a is 2 and b is 2
+2 Effect called: a is 2 and b is 2
+3 Effect called: a is 2 and b is 2
+---
+1 Effect called: a is 3 and b is 2
+2 Effect called: a is 3 and b is 2
+3 Effect called: a is 3 and b is 2
+---
+1 Effect called: a is 3 and b is 3
+2 Effect called: a is 3 and b is 3
+3 Effect called: a is 3 and b is 3
+---
+[
+  Signal { _value: 0, _dependents: [] },
+  Signal { _value: 0, _dependents: [] },
+  Signal { _value: 1, _dependents: [] },
+  Signal { _value: 2, _dependents: [] },
+  Signal { _value: 3, _dependents: [] },
+  Signal { _value: 4, _dependents: [] },
+  Signal { _value: 5, _dependents: [] },
+  Signal { _value: 6, _dependents: [] },
+  Signal { _value: 7, _dependents: [] },
+  Signal { _value: 8, _dependents: [] },
+  Signal { _value: 9, _dependents: [] },
+  Signal { _value: 10, _dependents: [] }
+]
+undefined
+#+end_example
 
 
 
